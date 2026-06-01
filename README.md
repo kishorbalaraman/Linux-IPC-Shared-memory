@@ -1,7 +1,6 @@
-# Ex06-Linux IPC-Shared-memory
-## Linux-IPC-Shared-memory
-## Name : KISHOR B
-## Reg No : 212225230141
+# Linux-IPC-Shared-memory
+Ex06-Linux IPC-Shared-memory
+
 # AIM:
 To Write a C program that illustrates two processes communicating using shared memory.
 
@@ -23,95 +22,144 @@ Execute the C Program for the desired output.
 
 ## Write a C program that illustrates two processes communicating using shared memory.
 ```
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+//shm1.o
 #include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/shm.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 
 #define TEXT_SZ 2048
 
-struct shared_use_st {
-    int written;
+struct shared_use_st
+{
+    int written_by_you;
     char some_text[TEXT_SZ];
 };
 
-int main() {
-    int shmid;
-    void *shared_memory = (void *)0;
+int main()
+{
+    int running = 1;
+    void *shared_memory = NULL;
     struct shared_use_st *shared_stuff;
+    int shmid;
 
-    // Create shared memory (use IPC_PRIVATE to avoid key issues)
-    shmid = shmget(IPC_PRIVATE, sizeof(struct shared_use_st), 0666 | IPC_CREAT);
-    if (shmid == -1) {
-        perror("shmget failed");
+    shmid = shmget((key_t)1234, sizeof(struct shared_use_st), 0666);
+    if (shmid == -1)
+    {
+        fprintf(stderr, "shmget failed\n");
         exit(EXIT_FAILURE);
     }
 
-    printf("Shared memory id = %d\n", shmid);
+    printf("Shared memory id is %d\n", shmid);
 
-    // Attach
     shared_memory = shmat(shmid, NULL, 0);
-    if (shared_memory == (void *)-1) {
-        perror("shmat failed");
+    if (shared_memory == (void *)-1)
+    {
+        fprintf(stderr, "shmat failed\n");
         exit(EXIT_FAILURE);
     }
 
     printf("Memory attached at %p\n", shared_memory);
 
     shared_stuff = (struct shared_use_st *)shared_memory;
-    shared_stuff->written = 0;
 
-    pid_t pid = fork();
+    while (running)
+    {
+        if (shared_stuff->written_by_you == 1)
+        {
+            printf("You wrote: %s\n", shared_stuff->some_text);
 
-    if (pid < 0) {
-        perror("fork failed");
+            if (strncmp(shared_stuff->some_text, "end", 3) == 0)
+            {
+                running = 0;
+            }
+
+            shared_stuff->written_by_you = 0;  // ✅ reset flag
+        }
+        sleep(1);
+    }
+
+    if (shmdt(shared_memory) == -1)
+    {
+        fprintf(stderr, "shmdt failed\n");
         exit(EXIT_FAILURE);
     }
 
-    if (pid == 0) {   // Child (Consumer)
-        while (1) {
-            while (shared_stuff->written == 0)
-                sleep(1);
+    exit(EXIT_SUCCESS);
+}
 
-            printf("Consumer received: %s", shared_stuff->some_text);
+//shm2.o
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/shm.h>
 
-            if (strncmp(shared_stuff->some_text, "end", 3) == 0)
-                break;
+#define TEXT_SZ 2048
 
-            shared_stuff->written = 0;
-        }
+struct shared_use_st {
+    int written_by_you;
+    char some_text[TEXT_SZ];
+};
 
-        shmdt(shared_memory);
-        exit(EXIT_SUCCESS);
-    } else {   // Parent (Producer)
-        char buffer[TEXT_SZ];
+int main()
+{
+    int running = 1;
+    void *shared_memory = NULL;
+    struct shared_use_st *shared_stuff;
+    char buffer[BUFSIZ];
+    int shmid;
 
-        while (1) {
-            printf("Enter Some Text: ");
-            fgets(buffer, TEXT_SZ, stdin);
+    shmid = shmget((key_t)1234, sizeof(struct shared_use_st),
+                   0666 | IPC_CREAT);
 
-            strncpy(shared_stuff->some_text, buffer, TEXT_SZ);
-            shared_stuff->written = 1;
-
-            printf("Producer sent: %s", shared_stuff->some_text);
-
-            if (strncmp(buffer, "end", 3) == 0)
-                break;
-
-            while (shared_stuff->written == 1)
-                sleep(1);
-        }
-
-        wait(NULL);
-
-        shmdt(shared_memory);
-        shmctl(shmid, IPC_RMID, NULL);
-
-        exit(EXIT_SUCCESS);
+    if (shmid == -1) {
+        fprintf(stderr, "shmget failed\n");
+        exit(EXIT_FAILURE);
     }
+
+    printf("Shared memory id = %d\n", shmid);
+
+    shared_memory = shmat(shmid, NULL, 0);
+    if (shared_memory == (void *)-1) {
+        fprintf(stderr, "shmat failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Memory attached at %p\n", shared_memory);
+
+    shared_stuff = (struct shared_use_st *)shared_memory;
+    shared_stuff->written_by_you = 0;   // ✅ IMPORTANT
+
+    while (running) {
+        while (shared_stuff->written_by_you == 1) {
+            sleep(1);
+            printf("Waiting for client...\n");
+        }
+
+        printf("Enter some text: ");
+        fgets(buffer, BUFSIZ, stdin);
+
+        buffer[strcspn(buffer, "\n")] = '\0'; // remove newline
+
+        strncpy(shared_stuff->some_text, buffer, TEXT_SZ);
+        shared_stuff->written_by_you = 1;
+
+        if (strncmp(buffer, "end", 3) == 0) {
+            running = 0;
+        }
+    }
+
+    if (shmdt(shared_memory) == -1) {
+        fprintf(stderr, "shmdt failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Remove shared memory
+    shmctl(shmid, IPC_RMID, 0);
+
+    exit(EXIT_SUCCESS);
 }
 ```
 
@@ -119,9 +167,7 @@ int main() {
 
 
 ## OUTPUT
-<img width="1380" height="1140" alt="ChatGPT Image May 14, 2026, 09_14_13 AM" src="https://github.com/user-attachments/assets/4c175e20-a05a-4f3a-88b9-9a5495f6b50e" />
-
-
+<img width="935" height="264" alt="image" src="https://github.com/user-attachments/assets/53956111-0dd6-415f-bddf-a12d8d3d2937" />
 
 
 # RESULT:
